@@ -1,0 +1,879 @@
+--- a/index.html
++++ b/index.html
+@@ -8,14 +8,14 @@
+     <link rel="stylesheet" href="./styles.css?v=198-2" />
+     <link rel="stylesheet" href="./gate.css?v=198-2" />
+     <link rel="stylesheet" href="./workbench.css?v=198-5" />
+-    <link rel="stylesheet" href="./lifecycle.css?v=paper-diagnosis-1" />
++    <link rel="stylesheet" href="./lifecycle.css?v=teacher-flow-2" />
+     <link rel="stylesheet" href="./production.css?v=20261116-classroom" />
+     <link rel="stylesheet" href="./assets/editorial/tokens.css?v=198-5" />
+     <link rel="stylesheet" href="./assets/editorial/workspace.css?v=198-5" />
+     <script src="./vendor/pdf-lib.min.js" defer></script>
+     <script src="./vendor/jszip.min.js" defer></script>
+     <script src="./vendor/pdf.min.js" defer></script>
+-    <script type="module" src="./client/application.mjs?v=teacher-flow-1"></script>
++    <script type="module" src="./client/application.mjs?v=teacher-flow-2"></script>
+   </head>
+   <body>
+     <main id="app"></main>
+--- a/lifecycle.css
++++ b/lifecycle.css
+@@ -60,3 +60,9 @@
+ }
+ .diagnosis-practice input { width: 1.1rem; height: 1.1rem; flex: 0 0 auto; }
+ .diagnosis-practice span span, .diagnosis-practice small { display: block; }
++
++.assessment-pick-list{display:grid;gap:8px;max-height:340px;overflow:auto;padding-inline-start:20px}
++.assessment-pick-list li{overflow-wrap:anywhere}
++.assessment-pick-list input{inline-size:auto;margin-inline-end:4px}
++.assessment-question img{display:block;max-inline-size:100%;height:auto;margin:12px 0}
++.assessment-question p{white-space:pre-wrap;overflow-wrap:anywhere}
+--- a/client/lifecycle-materials.js
++++ b/client/lifecycle-materials.js
+@@ -109,13 +109,15 @@
+   const questionFocus=allColumns.includes(requested)?requested:'';
+   const columns=questionFocus?[questionFocus]:allColumns;
+   const selected=rows.find(r=>r.studentId===wbUI().focusStudent) || rows[0],index=rows.indexOf(selected);
++  const standard = questionFocus ? String(state.knowledge[questionFocus]?.answer || '').trim().normalize('NFKC').toUpperCase() : '';
++  const batchAction = /^[A-D]$/.test(standard) ? '<button type="button" class="secondary" data-review-batch>批量校对本题</button>' : '';
+   const questionPicker=allColumns.length
+     ? '<label class="field"><span>校对范围</span><select data-review-question-focus><option value="">整份试卷</option>'+
+       allColumns.map(q=>'<option value="'+escapeAttr(q)+'" '+(q===questionFocus?'selected':'')+'>仅看第 '+escapeHtml(q)+' 题</option>').join('')+
+       '</select></label>' : '';
+ 
+   return tabs+
+-    v2Card('逐项校对','<div class="actions">'+v2Filter('wrongbook')+questionPicker+'<select data-review-filter aria-label="校对状态"><option value="">全部状态</option><option value="pending">待校对</option><option value="diff">有候选差异</option><option value="checked">已校对</option></select><button class="secondary" data-wrongbook-build>从已确认成绩建立错题表</button><button class="secondary" data-start-wrongbook-ai>'+(rows.length?'识别学生作答候选':'识别并建立错题表')+'</button></div><p class="hint">已校对 '+rows.filter(r=>r.checked).length+'/'+rows.length+' 人。仅填写错题原答。核对过的正确题留空，未作答填「空」，看不清填「?」。AI 候选须人工采用。</p>'+(questionFocus?'<p class="hint" role="status">逐生核对第 '+escapeHtml(questionFocus)+' 题。切回整份试卷后可确认整行或保存汇总。</p>':''),'<button class="primary" data-confirm-wrongbook '+(questionFocus?'disabled':'')+'>确认错题汇总</button>')+
++    v2Card('逐项校对','<div class="actions">'+v2Filter('wrongbook')+questionPicker+batchAction+'<select data-review-filter aria-label="校对状态"><option value="">全部状态</option><option value="pending">待校对</option><option value="diff">有候选差异</option><option value="checked">已校对</option></select><button class="secondary" data-wrongbook-build>从已确认成绩建立错题表</button><button class="secondary" data-start-wrongbook-ai>'+(rows.length?'识别学生作答候选':'识别并建立错题表')+'</button></div><p class="hint">已校对 '+rows.filter(r=>r.checked).length+'/'+rows.length+' 人。仅填写错题原答。核对过的正确题留空，未作答填「空」，看不清填「?」。AI 候选须人工采用。</p>'+(questionFocus?'<p class="hint" role="status">逐生核对第 '+escapeHtml(questionFocus)+' 题。切回整份试卷后可确认整行或保存汇总。</p>':''),'<button class="primary" data-confirm-wrongbook '+(questionFocus?'disabled':'')+'>确认错题汇总</button>')+
+     (selected?v2Card('原卷 · 标准 · 识别结果','<div class="actions"><button class="secondary" data-review-step="-1" '+(index<=0?'disabled':'')+'>上一位</button><strong>'+escapeHtml(selected.name)+'</strong><button class="secondary" data-review-step="1" '+(index>=rows.length-1?'disabled':'')+'>下一位</button><label>原卷缩放<select data-paper-zoom><option value="1">100%</option><option value="1.5">150%</option><option value="2">200%</option></select></label></div><div class="v2-review-grid"><div class="v2-paper"><div data-review-paper>'+v2PaperPreview(selected)+'</div></div><div class="v2-standard">'+columns.map(q=>'<p><strong>第'+escapeHtml(q)+'题</strong><br>'+escapeHtml(state.knowledge[q]?.answer || '缺少标准答案')+'</p>').join('')+'</div><div class="v2-candidates">'+columns.map(q=>{const c=selected.candidates?.[q];return '<div><strong>第'+escapeHtml(q)+'题</strong><p>'+escapeHtml(c?.answer || '无候选')+'</p>'+(c?'<button class="secondary" data-candidate-student="'+selected.studentId+'" data-candidate-q="'+escapeAttr(q)+'">采用为错题</button>':'')+'<button class="ghost" data-single-recognize="'+escapeAttr(q)+'" data-student="'+selected.studentId+'">单题重识别</button></div>';}).join('')+'</div></div>'):'')+
+     v2Card('错题明细','<div class="table-wrap"><table class="v2-wrong-table" style="table-layout:fixed;width:'+(columns.length*108+350)+'px"><thead><tr><th>姓名</th><th>原测得分</th>'+columns.map(q=>'<th>第'+escapeHtml(q)+'题</th>').join('')+'<th>校对</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr data-search-row="wrongbook" data-search-text="'+escapeAttr(r.name)+'" data-review-status="'+(r.checked?'checked':Object.keys(r.candidates || {}).length?'diff':'pending')+'"><td><button class="ghost" data-review-student="'+r.studentId+'">'+escapeHtml(r.name)+'</button></td><td>'+escapeHtml(r.score===''?'未录入':String(r.score))+'</td>'+columns.map(q=>'<td><input aria-label="'+escapeAttr(r.name+' 第'+q+'题错答')+'" data-wrong-row="'+i+'" data-wrong-q="'+escapeAttr(q)+'" value="'+escapeAttr(r.answers[q] || '')+'"></td>').join('')+'<td><button class="'+(r.checked?'ghost':'secondary')+'" data-row-check="'+i+'" '+(questionFocus?'disabled':'')+'>'+(r.checked?'已校对':'确认此行')+'</button></td></tr>').join('')+'</tbody></table></div>')+v2History();
+ }
+@@ -127,6 +129,7 @@
+   v2On('[data-wrongbook-tab]','click',(e,el)=>{wbUI().wrongbookTab=el.dataset.wrongbookTab;saveState();render();});
+   if(wbUI().wrongbookTab==='diagnosis'){bindPaperDiagnosis();return;}
+   if(wbUI().wrongbookTab==='corrections'){v2BindCorrections();return;}
++  v2Action('[data-review-batch]',()=>assessmentBatchDialog(document.querySelector('[data-review-question-focus]').value));
+   v2Action('[data-wrongbook-build]',()=>{if(!v2Session().confirmations.scores)throw new Error('请先确认成绩');if(!questionColumns().length)throw new Error('请先在题目解析页填写题号');syncWrongbookRows();saveState();render();});
+   v2Action('[data-start-wrongbook-ai]',()=>v2StartBatch('wrongbook',{materialId:state.pdf.materialId}));
+   v2Action('[data-confirm-wrongbook]',async()=>{
+@@ -278,12 +281,19 @@
+   if(job.kind==='wrongbook'){
+     if(!Array.isArray(parsed.answers))throw v2ModelError('本页缺少识别答案列表，请重试');
+     const row=state.wrongbook.rows.find(r=>r.studentId===item.studentId);if(!row)throw new Error('学生错题行不存在');row.candidates ||= {};
++    for(const [id,candidate] of Object.entries(row.choiceCandidates || {})){
++      if(candidate.page===item.page&&(!item.question||item.question===id))delete row.choiceCandidates[id];
++    }
+     for(const [id,candidate] of Object.entries(row.candidates)){
+       if(candidate.page===item.page&&(!item.question||item.question===id))delete row.candidates[id];
+     }
+     for(const q of parsed.answers){
+       const id=String(q.id).trim(),answer=typeof q.answer==='string'?q.answer.trim():'';
+       if(!state.wrongbook.columns.includes(id)||item.question&&item.question!==id||!answer)continue;
++      const selected = answer.normalize('NFKC').toUpperCase();
++      if (/^[A-D]$/.test(selected)) {
++        (row.choiceCandidates ||= {})[id] = {answer:selected, uncertain:q.uncertain !== false, page:item.page, source:Domain.assessmentReviewSource(s)};
++      }
+       if(Domain.samePaperAnswer(answer,s.confirmations.knowledge.snapshot[id]?.answer))continue;
+       row.candidates[id]={answer,uncertain:!!q.uncertain,page:item.page,jobId:job.id};
+     }
+--- a/client/lifecycle-views.js
++++ b/client/lifecycle-views.js
+@@ -321,7 +321,7 @@
+   const filter=wbUI().correctionFilter, student=filter?.sessionId===state.sessionId?filter.studentId:'';
+   const items=state.corrections.map((c,i)=>({c,i})).filter(({c})=>!student||c.studentId===student);
+   const filterLabel=student?'<div class="actions"><span class="hint">当前仅看 '+escapeHtml(v2Name(student))+'</span><button type="button" class="ghost" data-corrections-view-all>查看全班</button><button type="button" class="ghost" data-corrections-back-diagnosis>返回逐生诊断</button></div>':'';
+-  return v2Card('错题订正与复核','<p class="hint">订正任务来自本课次已确认错题。每次提交和教师判断都会留存，订正不改原测成绩。</p><button class="primary" data-corrections-create>从已确认错题创建任务</button>'+filterLabel+(items.length?'':'<p class="hint">当前没有订正任务。</p>'))+items.map(({c,i})=>'<article class="section"><div class="section-title-row"><h3>'+escapeHtml(v2Name(c.studentId))+' · 第'+escapeHtml(c.question)+'题</h3><span class="status-pill">'+v2CorrectionStatus(c.status)+'</span></div><p>原答：'+escapeHtml(c.originalAnswer)+'　标准答案：'+escapeHtml(c.standard.answer || '需教师核实')+'</p>'+(c.materialId?'<a href="/api/materials/'+c.materialId+'/file#page='+(c.page || 1)+'" target="_blank" rel="noopener">打开原题 · 第'+(c.page || 1)+'页</a>':'<p class="hint">旧记录未保存原卷，可回到拆卷页补传。</p>')+'<label>订正作答<textarea data-correction-draft="'+i+'" '+(['passed','review'].includes(c.status)?'disabled':'')+'>'+escapeHtml(c.draft || '')+'</textarea></label><div class="actions"><button class="primary" data-correction-submit="'+i+'" '+(['passed','review'].includes(c.status)?'disabled':'')+'>提交订正</button>'+(c.status==='review'?'<button class="secondary" data-correction-review="'+i+'">教师复核</button>':'')+'</div><details><summary>历次订正 · '+(c.attempts?.length || 0)+' 次</summary>'+(c.attempts || []).map(a=>'<div class="correction-attempt"><p>'+v2Date(a.at)+' · '+v2CorrectionStatus(a.status)+'</p><pre>'+escapeHtml(a.answer)+'</pre><p>'+escapeHtml(a.reason || '')+'</p></div>').join('')+'</details></article>').join('');
++  return v2Card('错题订正与复核','<p class="hint">订正任务来自本课次已确认错题。每次提交和教师判断都会留存，订正不改原测成绩。</p><button class="primary" data-corrections-create>从已确认错题创建任务</button>'+filterLabel+(items.length?'':'<p class="hint">当前没有订正任务。</p>'))+items.map(({c,i})=>'<article class="section"><div class="section-title-row"><h3>'+escapeHtml(v2Name(c.studentId))+' · 第'+escapeHtml(c.question)+'题</h3><span class="status-pill">'+v2CorrectionStatus(c.status)+'</span></div><p>原答：'+escapeHtml(c.originalAnswer)+'　标准答案：'+escapeHtml(c.standard.answer || '需教师核实')+'</p>'+(c.materialId?'<a href="/api/materials/'+c.materialId+'/file#page='+(c.page || 1)+'" target="_blank" rel="noopener">打开原题 · 第'+(c.page || 1)+'页</a>':'<p class="hint">旧记录未保存原卷，可回到拆卷页补传。</p>')+'<label>订正作答<textarea data-correction-draft="'+i+'" '+(['passed','review'].includes(c.status)?'disabled':'')+'>'+escapeHtml(c.draft || '')+'</textarea></label><div class="actions"><button class="primary" data-correction-submit="'+i+'" '+(['passed','review'].includes(c.status)?'disabled':'')+'>提交订正</button>'+(c.status==='passed'?'<button class="secondary" data-assessment-retest="'+escapeAttr(c.id)+'">同类题独立复测'+(c.retests?.length?' · '+assessmentRetestStatus(c.retests.at(-1).status):'')+'</button>':'')+(c.status==='review'?'<button class="secondary" data-correction-review="'+i+'">教师复核</button>':'')+'</div><details><summary>历次订正 · '+(c.attempts?.length || 0)+' 次</summary>'+(c.attempts || []).map(a=>'<div class="correction-attempt"><p>'+v2Date(a.at)+' · '+v2CorrectionStatus(a.status)+'</p><pre>'+escapeHtml(a.answer)+'</pre><p>'+escapeHtml(a.reason || '')+'</p></div>').join('')+'</details></article>').join('');
+ }
+ function v2BindCorrections(){
+   v2Action('[data-corrections-view-all]',()=>{delete wbUI().correctionFilter;render();});
+@@ -340,6 +340,7 @@
+   });
+   v2On('[data-correction-draft]','input',(e,el)=>{state.corrections[Number(el.dataset.correctionDraft)].draft=el.value;saveState();});
+   v2Action('[data-correction-submit]',async el=>{const c=state.corrections[Number(el.dataset.correctionSubmit)];if(c.status==='review'||c.status==='passed')throw new Error('本次订正已提交，请等待复核');if(!c.draft.trim())throw new Error('请填写订正作答');c.attempts.push({id:crypto.randomUUID(),answer:c.draft,at:new Date().toISOString(),status:'review'});c.status='review';saveState();await v2Flush();render();toast('已提交，等待教师核对原题与标准答案');});
++  v2Action('[data-assessment-retest]',el=>assessmentRetestDialog(el.dataset.assessmentRetest));
+   v2Action('[data-correction-review]',el=>v2CorrectionReview(Number(el.dataset.correctionReview)));
+ }
+ function v2CorrectionReview(index){const c=state.corrections[index],d=v2Dialog('教师复核订正','<p>'+escapeHtml(v2Name(c.studentId))+' · 第'+escapeHtml(c.question)+'题</p><pre>'+escapeHtml(c.attempts.at(-1)?.answer || '')+'</pre><p>原标准答案：'+escapeHtml(c.standard.answer || '未录入，请核对原卷')+'</p><label>复核依据<textarea data-correction-reason required></textarea></label><div class="actions"><button class="secondary" data-correction-verdict="failed">要求再次订正</button><button class="primary" data-correction-verdict="passed">符合标准，确认通过</button></div>');
+--- /dev/null
++++ b/client/assessment-practice.js
+@@ -0,0 +1,129 @@
++function assessmentEndpoint(sessionId, kind) {
++  return '/api/physics-exam/assessments/'+encodeURIComponent(sessionId)+'/'+kind;
++}
++
++async function assessmentRead(sessionId, kind, body) {
++  await v2Flush();
++  if(state.sessionId!==sessionId)throw new Error('课次已切换，请在原课次重新操作');
++  return Api.request(assessmentEndpoint(sessionId,kind),{...body,expectedRevision:v2.serverRevision});
++}
++
++async function assessmentBatchDialog(question) {
++  const sid=state.sessionId, kind='review-batch', endpoint=assessmentEndpoint(sid,kind);
++  const data=await assessmentRead(sid,kind,{action:'load',question});
++  if(state.sessionId!==sid)return;
++  function row(item) {
++    const name=escapeHtml(v2Name(item.studentId,item.name)), page=item.page;
++    const original=page?'<a href="/api/materials/'+escapeAttr(data.materialId)+'/file#page='+page+'" target="_blank" rel="noopener">原卷第 '+page+' 页 ↗</a>':'';
++    return '<li><label><input type="checkbox" data-review-batch-student="'+escapeAttr(item.studentId)+'" data-suggested="'+escapeAttr(item.suggested)+'" '+(item.reason?'disabled':'')+'> '+name+'</label> '+original+' <small class="hint">'+escapeHtml(item.reason || (item.suggested?'识别候选 '+item.suggested:'人工核对选项'))+'</small></li>';
++  }
++  const eligible=data.students.filter(item=>!item.reason);
++  const recent=data.batches.map(batch=>'<li><span>'+v2Date(batch.at)+' · '+escapeHtml(batch.answer)+' · '+batch.count+' 人</span> <button type="button" class="ghost" data-review-batch-undo="'+escapeAttr(batch.id)+'">撤销此批</button></li>').join('');
++  const choice='<label class="field">这一批在原卷上选了<select data-review-batch-answer><option value="">选择 A–D</option>'+['A','B','C','D'].map(ch=>'<option>'+ch+'</option>').join('')+'</select></label>';
++  const dlg=v2Dialog('第 '+question+' 题 · 批量校对',
++    '<p class="hint">确认标准 '+escapeHtml(data.standard)+'。核对原卷后，只选实际填了同一选项的学生。应用仅修改本题错答草稿，整卷仍需确认。</p>'+
++    (eligible.length?choice+'<div class="actions"><button type="button" class="secondary" data-review-batch-suggest>勾选当前选项的识别候选</button></div>':'<p class="hint">当前没有可批量校对的学生。</p>')+
++    '<ul class="assessment-pick-list">'+data.students.map(row).join('')+'</ul>'+
++    (eligible.length?'<div class="actions"><button type="button" class="secondary" data-review-batch-preview>预览本批</button></div><div data-review-batch-preview-result aria-live="polite"></div>':'')+
++    (recent?'<details open><summary>近期批次</summary><ul class="assessment-pick-list">'+recent+'</ul></details>':''));
++  const answer=dlg.querySelector('[data-review-batch-answer]'), result=dlg.querySelector('[data-review-batch-preview-result]');
++  const clear=()=>{result?.replaceChildren();};
++  dlg.addEventListener('change',clear);
++  v2Action('[data-review-batch-suggest]',()=>{
++    if(!answer.value)throw new Error('请先选择实际作答的选项');
++    for(const box of dlg.querySelectorAll('[data-review-batch-student]:enabled'))box.checked=box.dataset.suggested===answer.value;
++    clear();
++  },dlg);
++  v2Action('[data-review-batch-preview]',async()=>{
++    const values={question,answer:answer.value,studentIds:[...dlg.querySelectorAll('[data-review-batch-student]:checked')].map(box=>box.dataset.reviewBatchStudent)};
++    const preview=await assessmentRead(sid,kind,{action:'preview',...values});
++    if(!dlg.open||state.sessionId!==sid)return;
++    const list=preview.students.map(item=>v2Name(item.studentId,item.name)).join('、');
++    result.innerHTML='<p class="inline-status">共 '+preview.students.length+' 人 · 选 '+escapeHtml(preview.answer)+' · '+(preview.correct?'按正确记录':'登记错答')+'</p><p>'+escapeHtml(list)+'</p><button type="button" class="primary" data-review-batch-apply>确认应用本批</button>';
++    v2Action('[data-review-batch-apply]',async()=>{
++      if(state.sessionId!==sid)throw new Error('课次已切换，请重新预览');
++      await v2Mutation(endpoint,{action:'apply',...values,token:preview.token});
++      dlg.close();
++      if(state.sessionId!==sid)return;
++      render();
++      toast('本题批次已保存。可重新打开批量校对撤销。');
++    },result);
++  },dlg);
++  v2Action('[data-review-batch-undo]',async button=>{
++    if(state.sessionId!==sid)throw new Error('课次已切换，请重新打开批量校对');
++    await v2Mutation(endpoint,{action:'undo',question,batchId:button.dataset.reviewBatchUndo});
++    dlg.close();
++    if(state.sessionId!==sid)return;
++    render();
++    toast('已撤销本批。受影响的学生行需重新校对。');
++  },dlg);
++}
++
++function assessmentRetestStatus(status) {
++  return {awaiting:'待独立作答',review:'待教师判定',passed:'复测通过',retry:'需再练',cancelled:'本次已结束'}[status] || '未知状态';
++}
++
++function assessmentStudentQuestion(question) {
++  const images=question.imageAssets.map(a=>'<img src="/api/physics-exam/assets/'+escapeAttr(a.assetId)+'" alt="'+escapeAttr(a.alt)+'" loading="lazy">').join('');
++  if(question.contentMode==='original'&&images)return '<div class="assessment-question">'+images+'</div>';
++  const options=question.options.map(option=>'<li>'+escapeHtml(option.label+'．'+option.text)+'</li>').join('');
++  const tables=question.tables.map(table=>'<div class="table-wrap"><table><thead><tr>'+table.headers.map(cell=>'<th>'+escapeHtml(cell)+'</th>').join('')+'</tr></thead><tbody>'+table.rows.map(row=>'<tr>'+row.map(cell=>'<td>'+escapeHtml(cell)+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>').join('');
++  return '<div class="assessment-question"><p>'+escapeHtml(question.stem)+'</p>'+(options?'<ul>'+options+'</ul>':'')+tables+images+'</div>';
++}
++
++async function assessmentRetestDialog(correctionId) {
++  const sid=state.sessionId, kind='retest', endpoint=assessmentEndpoint(sid,kind);
++  const correction=state.corrections.find(c=>c.id===correctionId);
++  const data=await assessmentRead(sid,kind,{action:'load',correctionId});
++  if(state.sessionId!==sid)return;
++  const today=new Date().toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'});
++  const tomorrow=new Date(Date.now()+86400000).toLocaleDateString('sv-SE',{timeZone:'Asia/Shanghai'});
++  const open=data.retests.find(r=>['awaiting','review'].includes(r.status));
++  const options=data.choices.map(q=>'<option value="'+escapeAttr(q.id)+'">'+escapeHtml(q.source+' · 第 '+q.number+' 题 · '+q.stem)+'</option>').join('');
++  const history=data.retests.map(r=>'<li><strong>'+assessmentRetestStatus(r.status)+'</strong> · '+escapeHtml(r.dueOn)+
++    (r.firstAnswer?'<p>首答 · '+escapeHtml(r.firstAnswer)+'</p>':'')+(r.reason?'<p class="hint">'+escapeHtml(r.reason)+'</p>':'')+'</li>').join('');
++  const assignment=options?'<label class="field">已核验同考法题<select data-retest-choice><option value="">请选择一道</option>'+options+'</select></label>'+
++    '<label class="field">复测日期<input type="date" data-retest-date min="'+today+'" value="'+tomorrow+'"></label><button type="button" class="primary" data-retest-assign>布置独立复测</button>':
++    open?'':'<p class="hint">'+escapeHtml(data.reason || '暂时没有其他已核验的同考法题。可以先到真题题库确认相应题目。')+'</p>';
++  const dlg=v2Dialog('独立复测 · '+v2Name(correction.studentId),'<p class="hint">原错题第 '+escapeHtml(correction.question)+' 题'+(data.model?' · '+escapeHtml(data.model):'')+'。只保留每次复测的第一次独立作答。</p>'+
++    assignment+(open?'<div class="actions">'+(!data.reason?'<button type="button" class="primary" data-retest-open '+(open.status==='awaiting'&&today<open.dueOn?'disabled':'')+'>'+(open.status==='review'?'教师核对首答':'开始独立作答')+'</button>':'')+
++    '<button type="button" class="ghost" data-retest-cancel>结束本次复测</button></div>':'')+
++    (open&&data.reason?'<p class="hint">'+escapeHtml(data.reason)+'</p>':'')+
++    (history?'<ul class="assessment-pick-list">'+history+'</ul>':''));
++  async function save(body, message, reopen=false) {
++    if(state.sessionId!==sid)throw new Error('课次已切换，请回到原课次');
++    await v2Mutation(endpoint,{...body,correctionId});
++    dlg.close();
++    if(state.sessionId!==sid)return;
++    render();
++    if(reopen)await assessmentRetestDialog(correctionId);
++    toast(message);
++  }
++  v2Action('[data-retest-assign]',()=>save({action:'assign',questionId:dlg.querySelector('[data-retest-choice]').value,dueOn:dlg.querySelector('[data-retest-date]').value},'独立复测已保存。',true),dlg);
++  v2Action('[data-retest-cancel]',async()=>{
++    const reason=await v2Prompt('结束本次复测','填写原因。已经提交的首答仍会保留。','',true);
++    if(reason!==null)await save({action:'cancel',retestId:open.id,reason},'本次复测已结束。',true);
++  },dlg);
++  v2Action('[data-retest-open]',async()=>{
++    const payload=await assessmentRead(sid,kind,{action:'preview',correctionId,retestId:open.id});
++    if(!dlg.open||state.sessionId!==sid)return;
++    const body=dlg.querySelector('.dialog-body');
++    if(payload.question) {
++      body.innerHTML=assessmentStudentQuestion(payload.question)+
++        '<label class="field">第一次作答<textarea data-retest-answer maxlength="4000" rows="4"></textarea></label>'+
++        '<p><label><input type="checkbox" data-retest-independent> 本次全程独立完成，未查看答案或提示</label></p>'+
++        '<div class="actions"><button type="button" class="primary" data-retest-submit>提交首答</button></div>';
++      v2Action('[data-retest-submit]',()=>save({action:'submit',retestId:open.id,answer:body.querySelector('[data-retest-answer]').value,
++        independent:body.querySelector('[data-retest-independent]').checked},'首答已保存。',true),body);
++    }else{
++      body.innerHTML='<p>学生首答 · '+escapeHtml(payload.answer)+'</p><p>核验标准 · '+escapeHtml(payload.standard)+'</p>'+
++        (payload.explanation?'<p>'+escapeHtml(payload.explanation)+'</p>':'')+
++        '<label class="field">教师判定依据<textarea data-retest-reason maxlength="500" rows="3"></textarea></label>'+
++        '<div class="actions"><button type="button" class="secondary" data-retest-verdict="retry">需要再练</button>'+
++        '<button type="button" class="primary" data-retest-verdict="passed">确认复测通过</button></div>';
++      v2Action('[data-retest-verdict]',button=>save({action:'review',retestId:open.id,reason:body.querySelector('[data-retest-reason]').value,verdict:button.dataset.retestVerdict},
++        '复测判定已保存。',true),body);
++    }
++    body.querySelector('textarea')?.focus();
++  },dlg);
++}
+--- a/local-server.mjs
++++ b/local-server.mjs
+@@ -33,6 +33,7 @@
+ const server=createServer(async(req,res)=>{
+   try {
+     protect(req,port);
++    if (env.PANEL_RECOVERY_READ_ONLY === '1' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) throw new AppError('恢复演练只读', 405);
+     const url=new URL(req.url || '/', 'http://127.0.0.1:'+port);
+     if(req.method==='OPTIONS'){res.writeHead(204);res.end();return;}
+     if(req.method==='GET'&&url.pathname==='/api/ai/status'){sendJson(res,200,await models.status({force:true}));return;}
+--- a/scripts/build-client.mjs
++++ b/scripts/build-client.mjs
+@@ -3,7 +3,7 @@
+ import {readFile,writeFile,mkdir} from 'node:fs/promises';
+ let parse;
+ try {({parse}=await import('acorn'));} catch {({parse}=await import('../.build-deps/node_modules/acorn/dist/acorn.mjs'));}
+-const files=['app.js','gate.js','workbench.js','gate-workbench.js','client/lifecycle-core.js','client/teaching-flow.js','client/lifecycle-views.js','client/lifecycle-materials.js','client/paper-diagnosis.js','client/lifecycle-gates.js','client/physics-exam-native.js','client/teaching-production.js','client/classroom.js'];
++const files=['app.js','gate.js','workbench.js','gate-workbench.js','client/lifecycle-core.js','client/teaching-flow.js','client/lifecycle-views.js','client/lifecycle-materials.js','client/paper-diagnosis.js','client/assessment-practice.js','client/lifecycle-gates.js','client/physics-exam-native.js','client/teaching-production.js','client/classroom.js'];
+ const versions=new Map(),chunks=[],defined=new Set();
+ for(const [index,file]of files.entries()){
+   const source=await readFile(new URL('../'+file,import.meta.url),'utf8');
+--- /dev/null
++++ b/scripts/workbench-recovery.mjs
+@@ -0,0 +1,220 @@
++import { createHash } from 'node:crypto';
++import { createReadStream, constants } from 'node:fs';
++import { copyFile, lstat, mkdir, readdir, readFile, readlink, realpath, symlink, writeFile } from 'node:fs/promises';
++import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
++import { backup, DatabaseSync } from 'node:sqlite';
++
++const databases = [
++  'workbench.sqlite',
++  'physics-exam/exam-engine.sqlite',
++  'physics-exam/material-library.sqlite',
++  'teaching-production/production.sqlite',
++];
++const busyQueries = [
++  "select count(*) n from jobs where status in ('queued','running')",
++  "select count(*) n from engine_entity where collection='importJobs' and json_extract(payload,'$.status') in ('queued','running')",
++  null,
++  "select count(*) n from records where json_extract(body,'$.status') in ('queued','running','uploading','generating','saving','processing','exporting','transcribing')",
++];
++
++function isInside(parent, child) {
++  return parent === child || child.startsWith(parent + sep);
++}
++
++function safeEntry(name) {
++  return typeof name === 'string' && !isAbsolute(name) && !name.includes('\\') && name.split('/').every(part => part && part !== '.' && part !== '..');
++}
++
++async function digest(file) {
++  const hash = createHash('sha256');
++  for await (const chunk of createReadStream(file)) hash.update(chunk);
++  return hash.digest('hex');
++}
++
++async function listFiles(root, sub = '') {
++  const names = [];
++  for (const item of await readdir(join(root, sub), { withFileTypes: true })) {
++    const name = sub ? sub + '/' + item.name : item.name;
++    if (name.endsWith('-wal') || name.endsWith('-shm') || name.endsWith('-journal')) continue;
++    if (name === 'backups' || name === 'physics-exam/exam-backups') continue;
++    if (item.isDirectory()) names.push(...await listFiles(root, name));
++    else if ((item.isFile() || item.isSymbolicLink()) && safeEntry(name)) names.push(name);
++    else throw new Error('备份目录含不支持的文件类型，请先检查路径 ' + name);
++  }
++  return names.sort();
++}
++
++async function inspect(file) {
++  const stat = await lstat(file);
++  if (!stat.isFile()) throw new Error('发现非普通文件 ' + file);
++  const signature = [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(':');
++  return { stat, signature };
++}
++
++function verifyDb(file) {
++  const db = new DatabaseSync(file, { readOnly: true });
++  try {
++    if (db.prepare('pragma quick_check').get().quick_check !== 'ok') throw new Error('数据库完整性检查失败 ' + file);
++  } finally { db.close(); }
++}
++
++async function snapshot(data, feedback, out) {
++  if ([data, feedback].some(root => isInside(root, out)) || isInside(data, feedback) || isInside(feedback, data)) {
++    throw new Error('请选择独立的备份目录和两个独立的来源目录');
++  }
++  await mkdir(out, { mode: 0o700 });
++  const roots = { data, feedback };
++  const handles = [];
++  try {
++    for (const name of databases) handles.push(new DatabaseSync(join(data, name), { readOnly: true }));
++    const revisions = handles.map(db => db.prepare('pragma data_version').get().data_version);
++    const assertIdle = () => handles.forEach((db, index) => {
++      const sql = busyQueries[index];
++      if (sql && db.prepare(sql).get().n) throw new Error('工作台有进行中的任务，等任务结束后重新备份');
++    });
++    assertIdle();
++    const inventory = {};
++    const files = [];
++    for (const [kind, root] of Object.entries(roots)) {
++      await mkdir(join(out, kind), { mode: 0o700 });
++      inventory[kind] = await listFiles(root);
++      for (const name of inventory[kind]) {
++        const source = join(root, name), dest = join(out, kind, name);
++        await mkdir(dirname(dest), { recursive: true, mode: 0o700 });
++        if ((await lstat(source)).isSymbolicLink()) {
++          const link = await readlink(source);
++          if (isAbsolute(link) || !isInside(root, await realpath(source)) || !isInside(root, resolve(dirname(source), link))) {
++            throw new Error('链接指向备份范围之外 ' + name);
++          }
++          await symlink(link, dest);
++          files.push({ path: kind + '/' + name, link });
++          continue;
++        }
++        if (kind === 'data' && databases.includes(name)) {
++          await backup(handles[databases.indexOf(name)], dest);
++          verifyDb(dest);
++        } else {
++          const metadata = await inspect(source);
++          await copyFile(source, dest, constants.COPYFILE_EXCL);
++          const sha256 = await digest(dest);
++          if (metadata.signature !== (await inspect(source)).signature || sha256 !== await digest(source)) {
++            throw new Error('备份期间文件发生变化，请重试 ' + name);
++          }
++          files.push({ path: kind + '/' + name, size: metadata.stat.size, sha256, signature: metadata.signature });
++          continue;
++        }
++        files.push({ path: kind + '/' + name, size: (await lstat(dest)).size, sha256: await digest(dest) });
++      }
++    }
++    assertIdle();
++    if (handles.some((db, index) => db.prepare('pragma data_version').get().data_version !== revisions[index])) {
++      throw new Error('备份期间有记录写入，请重试');
++    }
++    for (const [kind, root] of Object.entries(roots)) {
++      if (JSON.stringify(await listFiles(root)) !== JSON.stringify(inventory[kind])) throw new Error('备份期间文件清单发生变化，请重试');
++    }
++    for (const file of files) {
++      const [kind, ...parts] = file.path.split('/');
++      if (file.link !== undefined && await readlink(join(roots[kind], ...parts)) !== file.link) throw new Error('链接在备份中发生变化');
++      if (!file.signature) continue;
++      if ((await inspect(join(roots[kind], ...parts))).signature !== file.signature) {
++        throw new Error('备份期间文件发生变化，请重试 ' + file.path);
++      }
++      delete file.signature;
++    }
++    if (handles.some((db, index) => db.prepare('pragma data_version').get().data_version !== revisions[index])) throw new Error('备份期间有记录写入，请重试');
++    await writeFile(join(out, 'manifest.json'), JSON.stringify({ format: 1, createdAt: new Date().toISOString(), roots, files }, null, 2), { flag: 'wx', mode: 0o600 });
++    console.log('整套备份完成', out, files.length + ' 个文件');
++  } finally { handles.forEach(db => db.close()); }
++}
++
++function remapProductionPaths(data, backupRoots, roots) {
++  const db = new DatabaseSync(join(data, databases[3]));
++  const remap = value => {
++    if (typeof value === 'string') {
++      for (const kind of ['data', 'feedback']) {
++        if (isInside(backupRoots[kind], value)) return join(roots[kind], relative(backupRoots[kind], value));
++      }
++      return value;
++    }
++    if (Array.isArray(value)) return value.map(remap);
++    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, child]) => [k, remap(child)]));
++    return value;
++  };
++  try {
++    db.exec('begin');
++    for (const [table, id, value] of [['records', 'id', 'body'], ['cache', 'key', 'value']]) {
++      const save = db.prepare('update ' + table + ' set ' + value + '=? where ' + id + '=?');
++      for (const row of db.prepare('select * from ' + table).all()) {
++        const previous = JSON.stringify(JSON.parse(row[value]));
++        const relocated = JSON.stringify(remap(JSON.parse(previous)));
++        if (previous !== relocated) save.run(relocated, row[id]);
++      }
++    }
++    db.exec('commit');
++  } finally { db.close(); }
++}
++
++async function restore(bundle, out) {
++  const manifest = JSON.parse(await readFile(join(bundle, 'manifest.json'), 'utf8'));
++  if (manifest.format !== 1 || !['data', 'feedback'].every(k => typeof manifest.roots?.[k] === 'string' && isAbsolute(manifest.roots[k])) || !Array.isArray(manifest.files)) {
++    throw new Error('无法识别的备份清单');
++  }
++  if (isInside(bundle, out) || Object.values(manifest.roots).some(root => isInside(root, out))) {
++    throw new Error('请选择独立的恢复目录');
++  }
++  const paths = new Set(), links = [];
++  for (const item of manifest.files) {
++    if (!safeEntry(item.path) || !/^(data|feedback)\//.test(item.path) || paths.has(item.path) ||
++        (item.link === undefined && (!Number.isSafeInteger(item.size) || item.size < 0 || !/^[a-f0-9]{64}$/.test(item.sha256)))) {
++      throw new Error('备份文件清单无效');
++    }
++    paths.add(item.path);
++    if (item.link !== undefined) {
++      if (typeof item.link !== 'string' || !item.link || isAbsolute(item.link) || !isInside(join(out, item.path.split('/')[0]), resolve(out, dirname(item.path), item.link))) {
++        throw new Error('备份链接超出恢复范围');
++      }
++      links.push(item);
++    }
++  }
++  if (links.some(link => [...paths].some(name => name.startsWith(link.path + '/')))) throw new Error('备份清单包含链接下的文件');
++  if (databases.some(name => !paths.has('data/' + name) || links.some(link => link.path === 'data/' + name))) throw new Error('备份缺少数据库');
++  // Only a new directory can be restored. A partial restore has no ready marker.
++  await mkdir(out, { mode: 0o700 });
++  const roots = { data: join(out, 'data'), feedback: join(out, 'feedback') };
++  for (const root of Object.values(roots)) await mkdir(root, { mode: 0o700 });
++  for (const item of manifest.files) {
++    if (item.link !== undefined) continue;
++    const from = join(bundle, item.path), to = join(out, item.path);
++    if (!isInside(bundle, await realpath(from))) throw new Error('原文件指向备份范围外');
++    if ((await inspect(from)).stat.size !== item.size) throw new Error('备份文件大小不符 ' + item.path);
++    await mkdir(dirname(to), { recursive: true, mode: 0o700 });
++    await copyFile(from, to, constants.COPYFILE_EXCL);
++    if (await digest(to) !== item.sha256) throw new Error('备份文件校验失败 ' + item.path);
++  }
++  for (const item of links) {
++    if (await readlink(join(bundle, item.path)) !== item.link) throw new Error('备份链接校验失败');
++    const dest = join(out, item.path);
++    await mkdir(dirname(dest), { recursive: true, mode: 0o700 });
++    await symlink(item.link, dest);
++  }
++  for (const item of links) {
++    if (!isInside(join(out, item.path.split('/')[0]), await realpath(join(out, item.path)))) throw new Error('恢复链接无法在独立目录解析');
++  }
++  for (const name of databases) verifyDb(join(roots.data, name));
++  remapProductionPaths(roots.data, manifest.roots, roots);
++  verifyDb(join(roots.data, databases[3]));
++  await writeFile(join(out, 'restore-ready.json'), JSON.stringify({ from: bundle, files: paths.size, ...roots }, null, 2), { flag: 'wx', mode: 0o600 });
++  console.log('整套恢复完成', out, paths.size + ' 个文件');
++}
++
++const [action, ...paths] = process.argv.slice(2);
++try {
++  const newPath = async value => join(await realpath(dirname(resolve(value))), basename(resolve(value)));
++  if (action === 'snapshot' && paths.length === 3) await snapshot(await realpath(paths[0]), await realpath(paths[1]), await newPath(paths[2]));
++  else if (action === 'restore' && paths.length === 2) await restore(await realpath(paths[0]), await newPath(paths[1]));
++  else throw new Error('用法：snapshot 数据目录 教育反馈目录 新备份目录；restore 备份目录 新恢复目录');
++} catch (error) {
++  console.error(error.message);
++  process.exitCode = 1;
++}
+--- /dev/null
++++ b/server/assessment-review.mjs
+@@ -0,0 +1,96 @@
++import { randomUUID } from 'node:crypto';
++import { assessmentReviewSource, confirmationCurrent, fingerprint } from '../shared/domain.mjs';
++import { AppError } from './store.mjs';
++
++function validChoice(answer) {
++  const value = String(answer ?? '').trim().normalize('NFKC').toUpperCase();
++  return /^[A-D]$/.test(value) ? value : '';
++}
++
++function prepare(session, question) {
++  if (!session) throw new AppError('找不到指定课次', 404);
++  if (!session.wrongbook.columns.includes(question) || !['knowledge','scores','pdf'].every(kind => confirmationCurrent(session, kind))) {
++    throw new AppError('请先确认答案、成绩和原卷匹配，再选择一道题', 422);
++  }
++  const standard = validChoice(session.confirmations.knowledge.snapshot[question]?.answer);
++  if (!standard) throw new AppError('批量校对只适用于标准答案是单个 A、B、C 或 D 的题目', 422);
++  const pdf = session.confirmations.pdf.snapshot;
++  const pairs = new Map(pdf.pairs.map(p => [p.studentId, p]));
++  const scores = new Map(session.confirmations.scores.snapshot.map(r => [r.studentId, r]));
++  const active = (session.wrongbook.batches || []).filter(batch => batch.question === question && !batch.undoneAt);
++  const processed = new Set(active.flatMap(batch => batch.changes.map(change => change.studentId)));
++  const source = assessmentReviewSource(session);
++  const students = session.wrongbook.rows.map(row => {
++    const paper = pairs.get(row.studentId), score = scores.get(row.studentId);
++    const existing = String(row.answers?.[question] ?? '').trim();
++    const reason = !paper || paper.matchMethod !== 'manual' ? '未确认原卷'
++      : !score || ['缺考','请假','未考','缺席','未参加'].includes(score.status) || score.score == null || String(score.score).trim() === '' || !Number.isFinite(Number(score.score)) ? '缺考或未录分'
++      : row.checked || processed.has(row.studentId) || existing ? '已有校对记录' : '';
++    const recognized = row.choiceCandidates?.[question];
++    const suggested = !reason && recognized?.source === source && recognized.uncertain === false &&
++      Number.isInteger(recognized.page) && recognized.page >= paper.start + 1 && recognized.page <= paper.end + 1
++      ? validChoice(recognized.answer) : '';
++    return { studentId: row.studentId, name: row.name, reason, suggested, current: existing,
++      page: paper ? paper.start + 1 : null, lastPage: paper ? paper.end + 1 : null };
++  });
++  return { question, standard, materialId: pdf.materialId, source, students,
++    batches: active.slice(-10).reverse().map(batch => ({ id: batch.id, answer: batch.answer, count: batch.changes.length, at: batch.at })) };
++}
++
++function preview(info, body) {
++  const answer = validChoice(body.answer);
++  const chosen = new Set(Array.isArray(body.studentIds) ? body.studentIds : []);
++  if (!answer || !chosen.size || chosen.size > 250 || [...chosen].some(id => typeof id !== 'string')) {
++    throw new AppError('请选择同一选项及至少一位已核对原卷的学生，单批最多 250 人', 422);
++  }
++  const students = info.students.filter(item => chosen.has(item.studentId) && !item.reason);
++  if (students.length !== chosen.size) throw new AppError('名单或校对状态已改变，请重新选择', 422);
++  return { answer, correct: answer === info.standard, students,
++    token: fingerprint([info.question, info.source, info.standard, answer, students]) };
++}
++
++export function reviewBatch(store, sessionId, body) {
++  const record = store.get();
++  store.checkRevision(body.expectedRevision, record.revision);
++  const question = typeof body.question === 'string' ? body.question : '';
++  const session = record.state.sessions[sessionId];
++  const info = prepare(session, question);
++  if (body.action === 'load') return info;
++  if (body.action === 'preview') return preview(info, body);
++  if (body.action !== 'apply' && body.action !== 'undo') throw new AppError('无效批量校对操作', 422);
++
++  return store.transact(record.revision, state => {
++    const current = state.sessions[sessionId];
++    const book = current.wrongbook;
++    book.batches ||= [];
++    const rows = new Map(book.rows.map(row => [row.studentId, row]));
++    if (body.action === 'apply') {
++      const selected = preview(info, body);
++      if (body.token !== selected.token) throw new AppError('预览已过期，请重新预览', 422);
++      const changes = selected.students.map(({ studentId }) => {
++        const row = rows.get(studentId);
++        row.answers ||= {};
++        const previous = Object.hasOwn(row.answers, question) ? row.answers[question] : null;
++        const applied = selected.correct ? '' : selected.answer;
++        row.answers[question] = applied;
++        return { studentId, previous, applied };
++      });
++      book.batches.push({ id: randomUUID(), at: new Date().toISOString(), question, answer: selected.answer,
++        source: info.source, changes });
++    } else {
++      const batch = book.batches.find(b => b.id === body.batchId && b.question === question && !b.undoneAt);
++      if (!batch || batch.source !== info.source || batch.changes.some(change =>
++        rows.get(change.studentId)?.answers?.[question] !== change.applied)) {
++        throw new AppError('原卷、标准或本批答项已经修改，保留现有记录，请逐项复查', 422);
++      }
++      for (const { studentId, previous } of batch.changes) {
++        const row = rows.get(studentId);
++        if (previous === null) delete row.answers[question];
++        else row.answers[question] = previous;
++        row.checked = false;
++      }
++      batch.undoneAt = new Date().toISOString();
++    }
++    book.confirmed = false;
++  });
++}
+--- /dev/null
++++ b/server/assessment-retest.mjs
+@@ -0,0 +1,124 @@
++import { createHash, randomUUID } from 'node:crypto';
++import ExamDomain from '../exam-engine/exam-domain.js';
++import StudentSets from '../exam-engine/student-question-set.js';
++import { paperContext } from './physics-paper-diagnosis.mjs';
++import { AppError } from './store.mjs';
++
++const text = value => String(value ?? '').trim();
++const normalized = value => text(value).normalize('NFKC').toUpperCase();
++const day = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
++const missingTag = /^(?:待.*|未知|无|未分类)$/;
++const activeStatuses = ['awaiting', 'review'];
++function versionHash(q) {
++  return createHash('sha256').update(JSON.stringify([StudentSets.contentHash(q), q.answer, q.method, q.explanation])).digest('hex');
++}
++
++function context(record, engine, sessionId, correctionId) {
++  const session = record.state.sessions[sessionId];
++  const correction = session?.corrections.find(c => c.id === correctionId);
++  if (!correction) throw new AppError('找不到指定订正任务', 404);
++  const retests = correction.retests || [];
++  const paper = paperContext(record, sessionId);
++  const bind = engine.settings?.reviewedPaperBindings?.[sessionId];
++  const source = bind?.paperIdentity === paper.wrongbook.paperIdentity
++    ? ExamDomain.reviewedPaperMapping(engine, paper.wrongbook, paper.knowledge).get(String(correction.question)) : null;
++  const origin = source;
++  const row = paper.wrongbook.rows.find(r => r.studentId === correction.studentId);
++  const response = row && ExamDomain.reviewedRowResponse(row, String(correction.question));
++  const originalAnswer = response?.outcome === 'blank' ? '空题' : text(row?.answers?.[correction.question]);
++  const stillCorrecting = ['blank', 'incorrect'].includes(response?.outcome) && originalAnswer === text(correction.originalAnswer) &&
++    text(correction.standard?.answer) === text(paper.knowledge[correction.question]?.answer);
++  const model = text(origin?.physicalModel);
++  let reason = '';
++  if (correction.status !== 'passed' || correction.attempts?.at(-1)?.status !== 'passed') reason = '请先完成订正并由教师复核通过';
++  else if (!paper.available || !stillCorrecting) reason = '原卷校对已修订，请先重新核对本题订正依据';
++  else if (!origin || !model || missingTag.test(model)) reason = '请在逐生诊断关联原卷，并核对本题的考法标签';
++  return { session, correction, retests, origin, model, reason };
++}
++
++function availableQuestions(engine, record, ctx) {
++  const used = new Set();
++  for (const session of Object.values(record.state.sessions)) {
++    for (const c of session.corrections || []) if (c.studentId === ctx.correction.studentId) {
++      for (const retest of c.retests || []) used.add(retest.questionId);
++    }
++  }
++  return engine.questions.filter(q => !used.has(q.id) && !q.generated && q.sourceFileId &&
++    q.canonicalExamId && q.canonicalExamId !== ctx.origin.canonicalExamId &&
++    text(q.physicalModel) === ctx.model && normalized(q.stem).replace(/\s+/g, '') !== normalized(ctx.origin.stem).replace(/\s+/g, '') &&
++    ExamDomain.eligiblePaperQuestion(q) && StudentSets.readiness(q).ready).slice(0, 24);
++}
++
++function currentQuestion(engine, retest) {
++  const q = engine.questions.find(q => q.id === retest.questionId);
++  if (!q || !ExamDomain.eligiblePaperQuestion(q) || !StudentSets.readiness(q).ready || versionHash(q) !== retest.contentHash) {
++    throw new AppError('原题已撤下或更新，请结束这次复测后另选一题', 422);
++  }
++  return q;
++}
++
++export function assessmentRetest(store, stored, sessionId, body) {
++  const record = store.get(), engine = stored.engine;
++  store.checkRevision(body.expectedRevision, record.revision);
++  const ctx = context(record, engine, sessionId, body.correctionId);
++  const current = ctx.retests.find(item => item.id === body.retestId);
++  if (body.action === 'load') {
++    const choices = ctx.reason || ctx.retests.some(r => activeStatuses.includes(r.status)) ? [] : availableQuestions(engine, record, ctx);
++    return { reason: ctx.reason, model: ctx.model, retests: ctx.retests,
++      choices: choices.map(q => ({ id: q.id, source: [q.year, q.region, q.examType].filter(Boolean).join(' · '), number: q.questionNo, stem: text(q.stem).slice(0, 120) })) };
++  }
++  if (body.action === 'preview') {
++    if (!current || !activeStatuses.includes(current.status)) throw new AppError('本次复测已结束', 422);
++    if (ctx.reason) throw new AppError(ctx.reason, 422);
++    const q = currentQuestion(engine, current);
++    if (current.status === 'review') return { answer: current.firstAnswer, standard: q.answer, explanation: q.explanation || q.method || '' };
++    if (day() < current.dueOn) throw new AppError('到 ' + current.dueOn + ' 才开始本次独立复测', 422);
++    const dto = StudentSets.studentQuestionDTO(q);
++    return { question: dto };
++  }
++  if (body.action === 'assign') {
++    if (ctx.reason) throw new AppError(ctx.reason, 422);
++    if (ctx.retests.some(r => activeStatuses.includes(r.status))) throw new AppError('请先结束正在进行的复测', 422);
++    const q = availableQuestions(engine, record, ctx).find(q => q.id === body.questionId);
++    const dueOn = text(body.dueOn), time = new Date(dueOn + 'T00:00:00Z');
++    if (!q) throw new AppError('请选择一道已审核、不同卷且未用过的同考法题', 422);
++    if (!/^\d{4}-\d{2}-\d{2}$/.test(dueOn) || !Number.isFinite(time.getTime()) || time.toISOString().slice(0, 10) !== dueOn || dueOn < day()) {
++      throw new AppError('请选择今天或以后的复测日期', 422);
++    }
++    return store.transact(record.revision, state => {
++      const correction = state.sessions[sessionId].corrections.find(c => c.id === ctx.correction.id);
++      (correction.retests ||= []).push({ id: randomUUID(), status: 'awaiting', questionId: q.id,
++        originalQuestionId: ctx.origin.id, contentHash: versionHash(q), dueOn, assignedAt: new Date().toISOString() });
++    });
++  }
++  if (!current || !activeStatuses.includes(current.status)) throw new AppError('本次复测已结束，首答已保留', 422);
++  if (body.action !== 'cancel' && ctx.reason) throw new AppError(ctx.reason, 422);
++  const at = new Date().toISOString();
++  let updates;
++  if (body.action === 'cancel') {
++    const reason = text(body.reason);
++    if (!reason || reason.length > 500) throw new AppError('请填写结束依据', 422);
++    updates = { status: 'cancelled', reason, reviewedAt: at };
++  } else if (body.action === 'submit' && current.status === 'awaiting') {
++    const firstAnswer = text(body.answer);
++    if (day() < current.dueOn) throw new AppError('到约定日期后再作答', 422);
++    if (!firstAnswer || firstAnswer.length > 4000 || body.independent !== true) throw new AppError('请填写首答并确认独立、无提示完成', 422);
++    const q = currentQuestion(engine, current);
++    const standard = normalized(q.answer), answer = normalized(firstAnswer);
++    const objective = /^(单项选择题|单选题)$/.test(q.type) && /^[A-D]$/.test(standard);
++    if (objective && !/^[A-D]$/.test(answer)) throw new AppError('单项选择题请填写一个选项 A、B、C 或 D', 422);
++    updates = { firstAnswer, submittedAt: at, independent: true, status: objective ? answer === standard ? 'passed' : 'retry' : 'review',
++      ...(objective ? { reviewedAt: at, reason: '依据审核后的单选答案核对' } : {}) };
++  } else if (body.action === 'review' && current.status === 'review') {
++    currentQuestion(engine, current);
++    const reason = text(body.reason);
++    if (!reason || reason.length > 500 || !['passed', 'retry'].includes(body.verdict)) throw new AppError('请选择结果并填写复核依据', 422);
++    updates = { status: body.verdict, reason, reviewedAt: at };
++  } else {
++    throw new AppError('复测状态已变更，请重新打开', 422);
++  }
++  return store.transact(record.revision, state => {
++    const correction = state.sessions[sessionId].corrections.find(c => c.id === ctx.correction.id);
++    Object.assign(correction.retests.find(r => r.id === current.id), updates);
++  });
++}
+--- a/server/physics-exam-routes.mjs
++++ b/server/physics-exam-routes.mjs
+@@ -9,6 +9,8 @@
+ import { readBody, sendJson } from "./routes.mjs";
+ import StudentQuestionSets from "../exam-engine/student-question-set.js";
+ import { exportStudentQuestionPdf } from "./physics-student-pdf.mjs";
++import { reviewBatch } from './assessment-review.mjs';
++import { assessmentRetest } from './assessment-retest.mjs';
+ import { paperContext, engineWithPanelEvidence, buildPaperDiagnosis, savePaperBinding, createSimilarQuestionSet, assignDiagnosticCorrections } from "./physics-paper-diagnosis.mjs";
+ 
+ const ROOT = "/api/physics-exam";
+@@ -35,6 +37,18 @@
+   }
+   if (path === "/library/stats" || path === "/library/report" || path === "/library/search" || path.startsWith("/library/items/")) {
+     await routeMaterialLibrary(request, response, path, url, context);
++    return true;
++  }
++  const assess = /^\/assessments\/([^/]+)\/(review-batch|retest)$/.exec(path);
++  if (assess) {
++    if (request.method !== 'POST') throw new AppError('不支持的操作', 405);
++    const sessionId = decodeURIComponent(assess[1]);
++    const body = await jsonBody(request, 64 * 1024);
++    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new AppError('请求格式无效', 400);
++    const result = assess[2] === 'review-batch'
++      ? reviewBatch(context.panelStore, sessionId, body)
++      : assessmentRetest(context.panelStore, context.getStore().getEngine(), sessionId, body);
++    sendJson(response, 200, result);
+     return true;
+   }
+   const diagnosis = /^\/assessments\/([^/]+)\/diagnosis(?:\/(binding|practice|corrections))?$/.exec(path);
+--- a/server/store.mjs
++++ b/server/store.mjs
+@@ -90,10 +90,26 @@
+         else {gate.progress={};gate.revisions=[];if(gate.plan.locked)throw new AppError('请通过确认锁定发布课程任务');}
+       }
+       for(const [cid,gate]of Object.entries(state.courses))if(!next.courses[cid])next.courses[cid]=clone(gate);
+-      for(const [id,session]of Object.entries(next.sessions))if(!state.sessions[id]){session.confirmations={};session.revisions=[];session.pdf.confirmed=false;session.wrongbook.confirmed=false;session.scoring.confirmed=false;}
++      for(const [id,session]of Object.entries(next.sessions))if(!state.sessions[id]){session.confirmations={};session.revisions=[];session.pdf.confirmed=false;session.wrongbook.confirmed=false;session.scoring.confirmed=false;delete session.wrongbook.batches;for(const correction of session.corrections)delete correction.retests;}
+       for(const [id,session]of Object.entries(state.sessions)){
+         if(!next.sessions[id])next.sessions[id]=clone(session);
+-        else {next.sessions[id].confirmations=clone(session.confirmations);next.sessions[id].revisions=clone(session.revisions);}
++        else {
++          const draft=next.sessions[id];
++          draft.confirmations=clone(session.confirmations);
++          draft.revisions=clone(session.revisions);
++          if(session.wrongbook.batches)draft.wrongbook.batches=clone(session.wrongbook.batches);
++          else delete draft.wrongbook.batches;
++          const original=new Map(session.corrections.map(item=>[item.id,item]));
++          for(const correction of draft.corrections){
++            const saved=original.get(correction.id);
++            if(saved?.retests){
++              if(saved.studentId!==correction.studentId||saved.question!==correction.question)throw new AppError('已有复测的订正不能更换学生或题号');
++              correction.retests=clone(saved.retests);
++            }else delete correction.retests;
++          }
++          const retained=new Set(draft.corrections.map(item=>item.id));
++          draft.corrections.push(...session.corrections.filter(c=>c.retests?.length&&!retained.has(c.id)).map(clone));
++        }
+       }
+       next.ai.key='';
+       for(const key of Object.keys(state))delete state[key];
+--- a/server/teaching-production.mjs
++++ b/server/teaching-production.mjs
+@@ -98,6 +98,7 @@
+     this.videoQueue=Promise.resolve();
+     this.lessonQueue=Promise.resolve();
+     this.stopping=false;
++    if (env.PANEL_RECOVERY_READ_ONLY === '1') return;
+     for(const job of this.all('recording',-1)){
+       if(['queued','running'].includes(job.status))this.queueVideo(job.id);
+       else if(job.status==='uploading'&&!job.sourceHash){job.status='draft';this.put(job); }
+@@ -799,15 +800,18 @@
+     const saved=version===null?record.versions.at(-1):record.versions.find(item=>item.id===version);
+     const file=saved?.[key];
+     if(!file)throw new AppError('这份成品还没有保存',404);
++    const root=await realpath(this.desktop).catch(()=>null);
+     const directory=await realpath(saved.dir).catch(()=>null);
+-    if(!directory||!directory.startsWith(this.desktop+sep)||dirname(file)!==directory){
++    const fileDirectory=await realpath(dirname(file)).catch(()=>null);
++    if(!root||!directory||!directory.startsWith(root+sep)||fileDirectory!==directory){
+       throw new AppError('成品目录已移动或不在教育反馈目录内',404);
+     }
+     const info=await lstat(file).catch(()=>null);
+-    if(!info?.isFile()||!info.size||await realpath(file).catch(()=>null)!==file){
++    const actual=await realpath(file).catch(()=>null);
++    if(!info?.isFile()||!info.size||actual!==join(directory,basename(file))){
+       throw new AppError('成品文件已移动或不可下载',404);
+     }
+-    return {file,mime};
++    return {file:actual,mime};
+   }
+ 
+   async run(req,res,url){
+@@ -889,7 +893,8 @@
+         if(!saved)throw new AppError('请先保存成品',409);
+         const delivered=saved.deliveryDir&&await realpath(saved.deliveryDir).catch(()=>null);
+         const folder=delivered||await realpath(saved.dir);
+-        if(!folder.startsWith(this.desktop+sep))throw new AppError('输出目录不在教育反馈目录内',403);
++        const rootDir=await realpath(this.desktop);
++        if(!folder.startsWith(rootDir+sep))throw new AppError('输出目录不在教育反馈目录内',403);
+         if(r.bundle)for(const type of ['report','review','copy',...(saved.parentPath?['parent']:[]),...(saved.groupPath?['group']:[]),...(saved.practicePath?['quiz']:[]),...(saved.promoPath?['poster']:[])])await this.feedbackDownload(r,type,saved.id);
+         if(saved.txtPath)await access(saved.txtPath);
+         await access(saved.pngPath);
+--- a/tests/v2-paper-diagnosis.test.mjs
++++ b/tests/v2-paper-diagnosis.test.mjs
+@@ -96,3 +96,74 @@
+   assert.equal(ExamDomain.activeAttempts(engineWithPanelEvidence(stored, record).engine).length, 0);
+   assert.equal(stored.engine.attempts.length, 62);
+ });
++
++function transactionalFixture(record) {
++  return {
++    get: () => record,
++    checkRevision(expected, current) {
++      if (expected !== current) throw Object.assign(new Error("outdated"), { status: 409 });
++    },
++    transact(expected, update) {
++      this.checkRevision(expected, record.revision);
++      const draft = structuredClone(record.state);
++      update(draft);
++      record.state = draft;
++      record.revision++;
++      return record;
++    }
++  };
++}
++
++test("批量校对拒绝缺考与陈旧候选，撤销不会覆盖后来修改的答项", async () => {
++  const { reviewBatch } = await import("../server/assessment-review.mjs");
++  const { record, session } = fixture();
++  session.pdf = { materialId: "paper-1", pairs: session.scores.map((row, index) => ({
++    studentId: row.studentId, start: index, end: index, matchMethod: "manual",
++  })) };
++  session.confirmations.pdf = { version: 1, snapshot: structuredClone(session.pdf) };
++  for (const row of session.wrongbook.rows) row.checked = false;
++  session.wrongbook.rows[0].choiceCandidates = { "1": { source: "obsolete", answer: "B", uncertain: false, page: 1 } };
++  const store = transactionalFixture(record);
++  const call = body => reviewBatch(store, sessionId, { question: "1", expectedRevision: record.revision, ...body });
++  const list = call({ action: "load" }).students;
++  assert.equal(list[0].suggested, "");
++  assert.ok(list[21].reason);
++  const changes = { studentIds: ["student-1", "student-2"], answer: "B" };
++  const { token } = call({ action: "preview", ...changes });
++  assert.throws(() => call({ action: "apply", ...changes, token: "other" }), { status: 422 });
++  call({ action: "apply", ...changes, token });
++  const book = record.state.sessions[sessionId].wrongbook;
++  assert.equal(book.rows[0].answers["1"], "B");
++  book.rows[1].answers["1"] = "C";
++  assert.throws(() => call({ action: "undo", batchId: book.batches[0].id }), { status: 422 });
++  assert.equal(record.state.sessions[sessionId].wrongbook.rows[1].answers["1"], "C");
++});
++
++test("独立复测绑定答案版本，主观题待教师核对并保留首答", async () => {
++  const { assessmentRetest } = await import("../server/assessment-retest.mjs");
++  const { record, session, stored } = fixture();
++  const origin = stored.engine.questions[0];
++  origin.physicalModel = "串联分压";
++  const variant = question("variant_11", "1", { canonicalExamId: "exam-2", physicalModel: "串联分压", stem: "新电路的分压关系",
++    type: "计算题", pageNo: 1, score: 3, imageReviewed: true,
++    imageAssets: [{ kind: "question-crop", id: "asset_test12345", pageNo: 1, exportApproved: true }] });
++  stored.engine.questions.push(variant);
++  session.corrections = [{ id: "fix", studentId: "student-21", question: "1", originalAnswer: "B",
++    standard: { answer: "A" }, status: "passed", attempts: [{ status: "passed" }] }];
++  const store = transactionalFixture(record);
++  const call = body => assessmentRetest(store, stored, sessionId, { correctionId: "fix", expectedRevision: record.revision, ...body });
++  assert.equal(call({ action: "load" }).choices[0].id, variant.id);
++  const dueOn = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
++  call({ action: "assign", questionId: variant.id, dueOn });
++  const { id: retestId } = record.state.sessions[sessionId].corrections[0].retests[0];
++  assert.ok(!Object.hasOwn(call({ action: "preview", retestId }).question, "answer"));
++  variant.answer = "标准改写";
++  assert.throws(() => call({ action: "submit", retestId, answer: "先求电流", independent: true }), { status: 422 });
++  variant.answer = "A";
++  call({ action: "submit", retestId, answer: "先求电流", independent: true });
++  assert.equal(call({ action: "load" }).retests[0].status, "review");
++  assert.equal(call({ action: "preview", retestId }).standard, "A");
++  call({ action: "review", retestId, reason: "分压推导正确", verdict: "passed" });
++  const result = call({ action: "load" }).retests[0];
++  assert.deepEqual([result.status, result.firstAnswer], ["passed", "先求电流"]);
++});
